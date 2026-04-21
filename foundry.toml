@@ -9,7 +9,7 @@ optimizer_runs = 200
 
 [rpc_endpoints]
 celo = "https://forno.celo.org"
-celo_alfajores = "https://alfajores-forno.celo-testnet.org"
+celo_alfajores = "${CELO_ALFAJORES_RPC_URL}"
 
 [etherscan]
 celo = { key = "${CELOSCAN_API_KEY}", url = "https://api.celoscan.io/api" }
