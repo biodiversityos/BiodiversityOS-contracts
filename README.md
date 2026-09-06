@@ -1,66 +1,96 @@
-## Foundry
+# BiodiversityOS — Registry Contracts
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+`BiodiversityRegistry` is an append-only registry of wildlife sightings on Celo.
 
-Foundry consists of:
+## Design
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+Records are **not stored on-chain**. `submitRecord` emits an event and returns an
+id; the indexer replays those events into Postgres and serves them over GraphQL.
+Only `recordReporter[id]` is kept in storage, which is what makes authorship
+enforceable without paying to store the record itself.
 
-## Documentation
+Consequences worth knowing before you touch the data:
 
-https://book.getfoundry.sh/
+- **Emitted events are permanent.** `voidRecord` tells indexers to drop a row and
+  `updateRecord` supersedes one, but neither erases the original event from chain
+  history. Anything published here — including free text in `comment` — is public
+  forever. Treat the import as a publication, not a database write.
+- The indexer database is the only queryable view. Losing it means re-indexing
+  from `START_BLOCK`, which must equal the registry's deployment block.
 
-## Usage
+## Access model
 
-### Build
+Writing is curated, not open:
 
-```shell
-$ forge build
+- `owner` administers the whitelist and can transfer ownership.
+- Only whitelisted addresses may `submitRecord`.
+- Only a record's original reporter, or the owner, may `updateRecord` / `voidRecord`.
+- The deployer is whitelisted by the constructor, so it can seed data immediately.
+
+## Development
+
+```bash
+forge build
+forge test
 ```
 
-### Test
+## Runbook
 
-```shell
-$ forge test
+Everything below assumes `.env` holds `PRIVATE_KEY` and `CELO_SEPOLIA_RPC_URL`.
+
+### 1. Deploy
+
+```bash
+forge script script/Deploy.s.sol:Deploy --rpc-url celo_sepolia --broadcast
 ```
 
-### Format
+Record two things from the output: the **contract address** and the **block
+number** it landed in. The indexer needs the block as `START_BLOCK`; starting
+lower just wastes RPC calls, starting higher silently loses records.
 
-```shell
-$ forge fmt
+### 2. Accredit reporters
+
+```bash
+REGISTRY=0x… REPORTERS=0xaaa,0xbbb GRANT=true \
+  forge script script/Whitelist.s.sol:Whitelist --rpc-url celo_sepolia --broadcast
 ```
 
-### Gas Snapshots
+`GRANT=false` revokes. Revoking does not strand a reporter's existing records —
+they can still correct them.
 
-```shell
-$ forge snapshot
+### 3. Prepare field data
+
+```bash
+python3 tools/prepare_data.py 'sharks database.xlsx' -o data/sightings.json
 ```
 
-### Anvil
+Defaults to `--privacy redact`, which strips observer names and URLs from the
+free text. `--privacy raw` publishes observations verbatim; only use it when
+every named person has consented to permanent publication. `--privacy drop`
+omits comments entirely.
 
-```shell
-$ anvil
+Read the summary it prints. Species it cannot map fall back to `unknown` and are
+reported as warnings — fix the mapping rather than importing `unknown` rows.
+
+### 4. Import
+
+```bash
+cd tools && npm install
+node import.mjs --registry 0x… --dry-run     # estimate gas, broadcast nothing
+node import.mjs --registry 0x…               # for real
 ```
 
-### Deploy
+The importer resumes from `nextRecordId`, so a run interrupted halfway can be
+restarted without duplicating rows. Batches default to 25 records; 40 fits
+comfortably in a block and costs roughly 37k gas per record.
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
+### 5. Point the indexer at the new registry
 
-### Cast
+Set `CONTRACT_ADDRESS` and `START_BLOCK` in the indexer's `.env`, wipe its
+database volume, and redeploy. A stale database indexed against a previous
+registry will silently mix old and new record ids.
 
-```shell
-$ cast <subcommand>
-```
+## Retiring a key
 
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+`transferOwnership` moves administration. It does **not** move the whitelist
+entry — grant the new owner explicitly if it should also be able to submit.

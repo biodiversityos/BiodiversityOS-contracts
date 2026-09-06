@@ -1,0 +1,13 @@
+{
+  "name": "biodiversityos-import",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "import": "node import.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "viem": "^2.56.3"
+  }
+}
