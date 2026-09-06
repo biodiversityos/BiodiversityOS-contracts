@@ -6,3 +6,4 @@ node_modules/
 # Field data stays out of the public repo: it carries observer names and private
 # media links. Regenerate it from the source workbook with tools/prepare_data.py.
 data/
+__pycache__/

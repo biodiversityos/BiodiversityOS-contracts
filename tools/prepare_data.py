@@ -14,6 +14,7 @@ Privacy modes:
     raw               publish observations verbatim  -- names and links included
 """
 import argparse, json, re, sys, unicodedata
+from classify_behavior import classify
 from collections import Counter
 from datetime import datetime, timezone, timedelta
 
@@ -128,6 +129,12 @@ def convert(path, privacy):
         if privacy == "drop":
             media_url = ""
 
+        # Behaviour comes from the original note, not the redacted one: redaction
+        # removes names and links, and must not change what the record says.
+        behavior, _ = classify(text(row[COL["observations"]]))
+        if behavior != "unknown":
+            stats[f"behaviour: {behavior}"] += 1
+
         ts = observed_at(row)
         if ts == 0:
             stats["date unknown"] += 1
@@ -141,10 +148,9 @@ def convert(path, privacy):
             "longitude":  round(float(row[COL["lon"]]) * 1_000_000),
             "species":    species,
             "count":      min(count, 65535),
-            # Behaviour was never a field in this survey. Deriving it from the
-            # Spanish free text would fabricate data for the 78% of rows that
-            # carry no behavioural wording at all.
-            "behavior":   "unknown",
+            # Read from the reporter's own note where they described what the
+            # animal was doing; unknown where they did not. See classify_behavior.
+            "behavior":   behavior,
             "observedAt": ts,
             "mediaUrl":   media_url,
             "comment":    comment,
